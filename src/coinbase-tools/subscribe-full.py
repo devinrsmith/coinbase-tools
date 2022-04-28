@@ -66,7 +66,7 @@ def __entrypoint__():
     #     Group("-", ["BTC-USD", "ETH-USD", "USDT-USD", "ADA-USD", "DOGE-USD", "SHIB-USD", "SOL-USD", "EOS-USD"])
     # ]
     config = [
-        Group("-", ["BTC-USD"])
+        Group("/mnt/tmpfs/BTC-USD.csv", ["BTC-USD"])
     ]
     asyncio.run(_run_all(config))
 
