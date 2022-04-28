@@ -60,7 +60,7 @@ async def _subscribe_full_and_proxy(producer : aiokafka.AIOKafkaProducer, topic 
 
 async def _run_all(config : Config):
     partition_dict = defaultdict(list)
-    for (product_id, partition) in config.product_partitions:
+    for (product_id, partition) in config.product_partitions.items():
         partition_dict[partition].append(product_id)
     async with aiokafka.AIOKafkaProducer(
         bootstrap_servers=config.bootstrap_servers,
