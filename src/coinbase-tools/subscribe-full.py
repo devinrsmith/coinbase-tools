@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import datetime
 import json
 import sys
+from typing import List
 import websockets
 
 COINBASE_WS_FEED = "wss://ws-feed.exchange.coinbase.com"
@@ -12,7 +13,7 @@ COINBASE_WS_FEED = "wss://ws-feed.exchange.coinbase.com"
 @dataclass
 class Group:
     handle: str
-    product_ids: list[str]
+    product_ids: List[str]
 
     async def _subscribe_full_and_write_group(self):
         if self.handle == '-':
