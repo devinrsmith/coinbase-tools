@@ -68,7 +68,7 @@ async def _run_all(config : Config):
         value_serializer=value_serializer,
         compression_type=None) as producer:
         await asyncio.gather(
-            *[ _subscribe_full_and_proxy(producer, config.topic, product_ids, None, partition) for (partition, product_ids) in partition_dict ]
+            *[ _subscribe_full_and_proxy(producer, config.topic, product_ids, None, partition) for (partition, product_ids) in partition_dict.items() ]
         )
 
 def __entrypoint__():
