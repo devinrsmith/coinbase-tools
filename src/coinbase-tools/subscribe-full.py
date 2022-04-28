@@ -47,7 +47,7 @@ async def _subscribe_full_and_write(out, product_ids):
         await ws.recv() # skip subscribe response
         await _write_messages(ws, out)
 
-async def _run_all(groups: list[Group]):
+async def _run_all(groups: List[Group]):
     await asyncio.gather(
         *[ group._subscribe_full_and_write_group() for group in groups ]
     )
