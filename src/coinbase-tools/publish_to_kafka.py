@@ -77,6 +77,13 @@ def __entrypoint__():
         topic='io.deephaven.coinbase.FullOrderbook',
         product_partitions={
             'BTC-USD' : 0,
+            'ETH-USD' : 1,
+            'USDT-USD' : 2,
+            'ADA-USD' : 3,
+            'DOGE-USD' : 4,
+            'SHIB-USD': 5,
+            'SOL-USD': 6,
+            'EOS-USD': 7,
         }
     )
     asyncio.run(_run_all(config))
