@@ -73,7 +73,7 @@ async def _run_all(config : Config):
 
 def __entrypoint__():
     config = Config(
-        bootstrap_servers=['redpanda:29092'],
+        bootstrap_servers=['10.150.0.4:9092'],
         topic='io.deephaven.coinbase.FullOrderbook',
         product_partitions={
             'BTC-USD' : 0,
