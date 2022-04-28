@@ -7,6 +7,7 @@ import json
 import sys
 from typing import List
 import websockets
+from websockets.extensions import permessage_deflate
 
 COINBASE_WS_FEED = "wss://ws-feed.exchange.coinbase.com"
 
@@ -42,7 +43,7 @@ async def _write_messages(ws, out):
         out.write(f"{now},{product_id},{sequence},{time}\n")
 
 async def _subscribe_full_and_write(out, product_ids):
-    async with websockets.connect(COINBASE_WS_FEED) as ws:
+    async with websockets.connect(COINBASE_WS_FEED, compression=None) as ws:
         await _subscribe_full(ws, product_ids)
         await ws.recv() # skip subscribe response
         await _write_messages(ws, out)
@@ -67,7 +68,7 @@ def __entrypoint__():
     #     Group("-", ["BTC-USD", "ETH-USD", "USDT-USD", "ADA-USD", "DOGE-USD", "SHIB-USD", "SOL-USD", "EOS-USD"])
     # ]
     config = [
-        Group("/mnt/tmpfs/BTC-USD.csv", ["BTC-USD"])
+        Group("/mnt/tmpfs/BTC-USD.no-compress.csv", ["BTC-USD"])
     ]
     asyncio.run(_run_all(config))
 
