@@ -7,7 +7,6 @@ import json
 import sys
 from typing import List
 import websockets
-from websockets.extensions import permessage_deflate
 
 COINBASE_WS_FEED = "wss://ws-feed.exchange.coinbase.com"
 
@@ -23,7 +22,7 @@ class Group:
             with open(self.handle, mode='w') as out:
                 await _subscribe_full_and_write(out, self.product_ids)
 
-async def _subscribe_full(ws, product_ids):
+async def _subscribe_full(ws, product_ids: List[str]):
     json_inner = '","'.join(product_ids)
     subscribe_msg = f'{{"type":"subscribe","channels":[{{"name":"full","product_ids":["{json_inner}"]}}]}}'
     await ws.send(subscribe_msg)
@@ -42,7 +41,7 @@ async def _write_messages(ws, out):
         product_id, sequence, time = _parse_message(message)
         out.write(f"{now},{product_id},{sequence},{time}\n")
 
-async def _subscribe_full_and_write(out, product_ids):
+async def _subscribe_full_and_write(out, product_ids : List[str]):
     async with websockets.connect(COINBASE_WS_FEED, compression=None) as ws:
         await _subscribe_full(ws, product_ids)
         await ws.recv() # skip subscribe response
