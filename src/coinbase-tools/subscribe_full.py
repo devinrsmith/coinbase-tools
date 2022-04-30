@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import datetime
 import json
 import sys
-from typing import List
+from typing import List, Optional
 import websockets
 
 COINBASE_WS_FEED = "wss://ws-feed.exchange.coinbase.com"
@@ -14,6 +14,7 @@ COINBASE_WS_FEED = "wss://ws-feed.exchange.coinbase.com"
 class Group:
     handle: str
     product_ids: List[str]
+    compression: Optional[str] = "deflate"
 
     async def _subscribe_full_and_write_group(self):
         if self.handle == '-':
@@ -41,8 +42,8 @@ async def _write_messages(ws, out):
         product_id, sequence, time = _parse_message(message)
         out.write(f"{now},{product_id},{sequence},{time}\n")
 
-async def _subscribe_full_and_write(out, product_ids : List[str]):
-    async with websockets.connect(COINBASE_WS_FEED, compression=None) as ws:
+async def _subscribe_full_and_write(out, product_ids : List[str], compression: Optional[str]):
+    async with websockets.connect(COINBASE_WS_FEED, compression=compression) as ws:
         await _subscribe_full(ws, product_ids)
         await ws.recv() # skip subscribe response
         await _write_messages(ws, out)
@@ -67,7 +68,8 @@ def __entrypoint__():
     #     Group("-", ["BTC-USD", "ETH-USD", "USDT-USD", "ADA-USD", "DOGE-USD", "SHIB-USD", "SOL-USD", "EOS-USD"])
     # ]
     config = [
-        Group("/mnt/tmpfs/BTC-USD.no-compress.csv", ["BTC-USD"])
+        Group("/mnt/tmpfs/BTC-USD.None.csv", ["BTC-USD"], compression=None),
+        Group("/mnt/tmpfs/BTC-USD.deflate.csv", ["BTC-USD"], compression="deflate")
     ]
     asyncio.run(_run_all(config))
 
