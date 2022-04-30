@@ -18,10 +18,10 @@ class Group:
 
     async def _subscribe_full_and_write_group(self):
         if self.handle == '-':
-            await _subscribe_full_and_write(sys.stdout, self.product_ids)
+            await _subscribe_full_and_write(sys.stdout, self.product_ids, self.compression)
         else:
             with open(self.handle, mode='w') as out:
-                await _subscribe_full_and_write(out, self.product_ids)
+                await _subscribe_full_and_write(out, self.product_ids, self.compression)
 
 async def _subscribe_full(ws, product_ids: List[str]):
     json_inner = '","'.join(product_ids)
