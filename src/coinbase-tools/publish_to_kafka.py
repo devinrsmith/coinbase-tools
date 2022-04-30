@@ -6,6 +6,7 @@ from typing import Dict, List
 import aiokafka
 import asyncio
 import websockets
+import time
 
 from . import subscribe_full
 
@@ -27,30 +28,34 @@ async def _proxy_to_kafka(ws, producer : aiokafka.AIOKafkaProducer, topic : str,
     bytes = 0
     offset = 0
     leftover_msg = None
+    leftover_time = None
     while True:
         batch = producer.create_batch()
         first_msg = leftover_msg or await ws.recv()
+        first_time = leftover_time or time.time()
         leftover_msg = None
-        if not batch.append(key=key_bytes, value=value_serializer(first_msg), timestamp=None):
+        leftover_time = None
+        if not batch.append(key=key_bytes, value=value_serializer(first_msg), timestamp=first_time):
             raise RuntimeError("can't even send one message")
         while True:
             try:
                 next_msg = await asyncio.wait_for(ws.recv(), 0.000000001)
             except asyncio.TimeoutError:
                 break
-            if not batch.append(key=key_bytes, value=value_serializer(next_msg), timestamp=None):
+            next_time = time.time()
+            if not batch.append(key=key_bytes, value=value_serializer(next_msg), timestamp=next_time):
                 leftover_msg = next_msg
+                leftover_time = next_time
                 break
         batch.close()
         fut = await producer.send_batch(batch, topic, partition=partition)
         record = await fut
-
         records = records + batch.record_count()
         bytes = bytes + batch.size()
         offset = record.offset
         batches = batches + 1
         if batches % 100 == 1:
-            print(f"{batches},{records},{bytes},{offset}")
+            print(f"{partition},{batches},{records},{bytes},{offset}")
 
 async def _subscribe_full_and_proxy(producer : aiokafka.AIOKafkaProducer, topic : str, product_ids: List[str], key_bytes : bytes, partition : int):
     async with websockets.connect(subscribe_full.COINBASE_WS_FEED, compression=None) as ws:
