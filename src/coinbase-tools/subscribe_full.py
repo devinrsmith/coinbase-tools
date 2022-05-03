@@ -10,6 +10,10 @@ import websockets
 
 COINBASE_WS_FEED = "wss://ws-feed.exchange.coinbase.com"
 
+# max seen size: ~300?
+# 1 KiB should be generous
+FULL_CHANNEL_MAX_BYTES_PER_MSG = 2 ** 10
+
 @dataclass
 class Group:
     handle: str
