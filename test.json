@@ -3,8 +3,14 @@
     "bootstrap_servers": ["localhost:9092"],
     "topic": "io.deephaven.coinbase.FullOrderbook",
     "product_partitions": {
-        "BTC-USD": 0
+        "BTC-USD": 0,
+        "ETH-USD": 0,
+        "USDT-USD": 0,
+        "ADA-USD": 0,
+        "DOGE-USD": 0,
+        "SHIB-USD": 0,
+        "SOL-USD": 0,
+        "EOS-USD": 0
     },
-    "max_linger": 0.1,
-    "max_batch_bytes": 32768
+    "max_linger": 1.0
 }

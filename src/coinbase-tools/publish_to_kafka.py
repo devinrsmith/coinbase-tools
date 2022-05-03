@@ -2,7 +2,6 @@
 
 from collections import defaultdict
 from dataclasses import dataclass
-import json
 from sre_constants import MIN_UNTIL
 from typing import Dict, List, Optional
 import aiokafka
@@ -44,7 +43,7 @@ class Config:
             compression = None) as ws:
             await subscribe_full._subscribe_full(ws, product_ids)
             await ws.recv() # skip subscribe response
-            await _proxy_to_kafka(ws, producer, self.topic, None, partition, self.max_linger)
+            await _proxy_to_kafka_print(ws, producer, self.topic, partition, self.max_batch_bytes, self.max_linger)
 
     async def run(self):
         partition_dict = defaultdict(list)
@@ -60,6 +59,16 @@ class Config:
             await asyncio.gather(
                 *[ self._subscribe_full_and_proxy(producer, product_ids, partition) for (partition, product_ids) in partition_dict.items() ]
             )
+
+@dataclass
+class Metrics:
+    partition: int
+    batches : int
+    records : int
+    bytes : int
+    offset : int
+    ws_full_count : int
+    batch_full_count : int
 
 def key_serializer(key):
     return None if not key else bytes(key, encoding='utf8')
@@ -78,21 +87,25 @@ async def _recv_timeout(ws, timeout):
         return None
     return next_msg, time.time()
 
-def _append(batch, msg, time, key_bytes : bytes):
-    return batch.append(key=key_bytes, value=value_serializer(msg), timestamp=int(time * 1000))
+def _append(batch, msg, time):
+    return batch.append(key=None, value=value_serializer(msg), timestamp=int(time * 1000))
 
-async def _proxy_to_kafka(ws, producer : aiokafka.AIOKafkaProducer, topic : str, key_bytes : bytes, partition : int, max_linger : float):
+async def _proxy_to_kafka(ws, producer : aiokafka.AIOKafkaProducer, topic : str, partition : int, max_linger : float):
     batches = 0
     records = 0
     bytes = 0
     offset = 0
+    ws_full_count = 0
+    batch_full_count = 0
     leftover = None
     while True:
-        # if len(ws.messages) == ws.max_queue:
-        #     print("warning: read queue full")
         batch = producer.create_batch()
+        # Encountering full queues is likely a sign of falling behind, or not having enough buffer space to handle expected bursts
+        if len(ws.messages) >= ws.max_queue:
+            ws_full_count = ws_full_count + 1
         (msg, now) = leftover or await _recv(ws)
-        if not _append(batch, msg, now, key_bytes):
+        leftover = None
+        if not _append(batch, msg, now):
             raise RuntimeError("can't even send one message")
         linger_time = now + max_linger
         linger_timeout = max_linger
@@ -101,8 +114,9 @@ async def _proxy_to_kafka(ws, producer : aiokafka.AIOKafkaProducer, topic : str,
             if not next:
                 break
             (msg, now) = next
-            if not _append(batch, msg, now, key_bytes):
+            if not _append(batch, msg, now):
                 leftover = (msg, now)
+                batch_full_count = batch_full_count + 1
                 break
             # Note: even if linger_timeout <= 0, we still should pull anything that is "immediately" available from the ws.recv() queue
             linger_timeout = linger_time - now
@@ -113,7 +127,14 @@ async def _proxy_to_kafka(ws, producer : aiokafka.AIOKafkaProducer, topic : str,
         bytes = bytes + batch.size()
         offset = record.offset
         batches = batches + 1
-        print(f"{partition},{batches},{records},{bytes},{offset}")
+        yield Metrics(partition, batches, records, bytes, offset, ws_full_count, batch_full_count)
+
+async def _proxy_to_kafka_print(ws, producer : aiokafka.AIOKafkaProducer, topic : str, partition : int, max_batch_bytes : int, max_linger : float):
+    last_metric = None
+    async for metric in _proxy_to_kafka(ws, producer, topic, partition, max_linger):
+        if not last_metric or int(last_metric.bytes / max_batch_bytes) != int(metric.bytes / max_batch_bytes):
+            print(metric)
+        last_metric = metric
 
 def parse_args(args) -> Config:
     parser = argparse.ArgumentParser(description='Publish to kafka.')
