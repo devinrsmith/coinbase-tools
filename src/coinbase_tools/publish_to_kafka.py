@@ -8,11 +8,15 @@ from dataclasses_json import dataclass_json
 import time
 import argparse
 
+from aiokafka.helpers import create_ssl_context
+
 from . import feed as coinbase_feed
 
 @dataclass_json
 @dataclass
 class Config:
+    # TODO: separate out kafka config into own object
+
     bootstrap_servers : List[str]
     topic: str
     product_partitions : Dict[str, int]
@@ -23,6 +27,11 @@ class Config:
     client_id: Optional[str] = None
     producer_compression_type: Optional[str] = None
     feed: coinbase_feed.Config = coinbase_feed.Config()
+
+    security_protocol: str = "PLAINTEXT"
+    sasl_mechanism: str = "PLAIN"
+    sasl_plain_username: Optional[str] = None
+    sasl_plain_password: Optional[str] = None
 
     @property
     def feed_max_memory(self) -> int:
@@ -63,7 +72,12 @@ class Config:
             bootstrap_servers=self.bootstrap_servers,
             client_id=self.client_id,
             max_batch_size=self.max_batch_memory,
-            compression_type=self.producer_compression_type) as producer:
+            compression_type=self.producer_compression_type,
+            ssl_context=create_ssl_context(),
+            security_protocol=self.security_protocol,
+            sasl_mechanism=self.sasl_mechanism,
+            sasl_plain_username=self.sasl_plain_username,
+            sasl_plain_password=self.sasl_plain_password) as producer:
             await asyncio.gather(
                 *[ self._subscribe_full_and_proxy(producer, partition) for partition in self.partitions ]
             )
