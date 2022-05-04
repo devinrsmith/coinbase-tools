@@ -8,7 +8,7 @@ import sys
 from typing import List
 from dataclasses_json import dataclass_json
 
-from . import feed
+from . import feed as coinbase_feed
 
 COINBASE_WS_FEED="wss://ws-feed.exchange.coinbase.com"
 
@@ -20,11 +20,13 @@ FULL_CHANNEL_MAX_BYTES_PER_MSG = 2 ** 10
 @dataclass
 class Group:
     handle: str
-    feed: feed.Config
+    product_ids: List[str]
+    max_memory: int = 2**20 # 1 MiB
+    feed: coinbase_feed.Config = coinbase_feed.Config()
 
     async def _subscribe_full_and_write(self, out):
-        async with self.feed.connect() as connection:
-            await connection.subscribe_full()
+        async with self.feed.connect(self.max_memory) as connection:
+            await connection.subscribe_full(self.product_ids)
             out.write("wire_time,product_id,sequence,time\n")
             async for message in connection.recv_all():
                 now = datetime.datetime.now(datetime.timezone.utc)

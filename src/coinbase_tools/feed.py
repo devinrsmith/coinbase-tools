@@ -18,35 +18,36 @@ MIN_LINGER = 0.000000001
 @dataclass_json
 @dataclass
 class Config:
-    product_ids: List[str]
     uri: str = WS_FEED_URI
     max_message_size: int = FULL_CHANNEL_MAX_BYTES_PER_MSG
     compression: Optional[str] = "deflate"
 
-    @property
-    def subscribe_full(self):
-        json_inner = '","'.join(self.product_ids)
-        return f'{{"type":"subscribe","channels":[{{"name":"full","product_ids":["{json_inner}"]}}]}}'
-
     @asynccontextmanager
-    async def connect(self):
+    async def connect(self, max_memory : int):
+        max_queue = max(1, int(max_memory / self.max_message_size))
         async with websockets.connect(
             self.uri,
             max_size=self.max_message_size,
-            compression=self.compression) as ws:
+            compression=self.compression,
+            max_queue=max_queue) as ws:
             yield Connection(self, ws)
 
 class Connection:
     def __init__(self, config: Config, ws):
         self._config = config
         self._ws = ws
-        self._subscribed = False
+        self._products = None
     
-    async def subscribe_full(self):
-        if self._subscribed:
+    def queue_length(self):
+        return len(self._ws.messages)
+
+    async def subscribe_full(self, product_ids: List[str]):
+        if self._products:
             raise Exception("May only subscribe once")
-        self._subscribed = True
-        await self._ws.send(self._config.subscribe_full)
+        self._products = product_ids
+        json_inner = '","'.join(self._products)
+        msg = f'{{"type":"subscribe","channels":[{{"name":"full","product_ids":["{json_inner}"]}}]}}'
+        await self._ws.send(msg)
         await self._ws.recv() # skip subscribe response
 
     async def recv_raw(self):

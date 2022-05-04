@@ -1,19 +1,14 @@
 #!/usr/bin/env python
 
-from collections import defaultdict
 from dataclasses import dataclass
-from sre_constants import MIN_UNTIL
 from typing import Dict, List, Optional, Set
 import aiokafka
 import asyncio
 from dataclasses_json import dataclass_json
-import websockets
 import time
 import argparse
 
-from . import subscribe_full
-
-MIN_LINGER = 0.000000001
+from . import feed as coinbase_feed
 
 @dataclass_json
 @dataclass
@@ -21,56 +16,56 @@ class Config:
     bootstrap_servers : List[str]
     topic: str
     product_partitions : Dict[str, int]
-    max_batch_bytes: int = 2 ** 20 # 1 MiB
+
+    max_memory: int = 2 ** 25 # 32 MiB
+    # max_batch_bytes: int = 2 ** 20 # 1 MiB
     max_linger: float = 0.0
     client_id: Optional[str] = None
     producer_compression_type: Optional[str] = None
-    feed_uri: str = subscribe_full.COINBASE_WS_FEED
-    feed_max_size: int = subscribe_full.FULL_CHANNEL_MAX_BYTES_PER_MSG
+    feed: coinbase_feed.Config = coinbase_feed.Config()
 
     @property
-    def max_queue(self) -> int:
-        # max_queue * FULL_CHANNEL_MAX_BYTES_PER_MSG  == max_batch_bytes
-        # =>
-        # max_queue =
-        return int(self.max_batch_bytes / subscribe_full.FULL_CHANNEL_MAX_BYTES_PER_MSG)
+    def feed_max_memory(self) -> int:
+        return int(self.max_memory / len(self.partitions) / 2)
+
+    @property
+    def max_batch_memory(self) -> int:
+        return int(self.max_memory / len(self.partitions) / 2)
+
+    # @property
+    # def max_memory_estimate(self) -> int:
+    #     # * 2, to account for ws recv buffer and producer send buffer
+    #     return len(self.partitions) * self.max_batch_bytes * 2
 
     @property
     def partitions(self) -> Set[int]:
         return set(self.product_partitions.values())
 
-    @property
-    def max_memory_estimate(self) -> int:
-        # * 2, to account for ws recv buffer and producer send buffer
-        return len(self.partitions) * self.max_batch_bytes * 2
+    # def partitions(self) -> Set[int]:
+    #     return set(self.product_partitions.values())
 
-    @property
-    def partition_dict(self):
-        partition_dict = defaultdict(list)
-        for (product_id, partition) in self.product_partitions.items():
-            partition_dict[partition].append(product_id)
-        return partition_dict
+    def products_for(self, partition : int) -> List[str]:
+        product_ids = []
+        for (product_id, p) in self.product_partitions.items():
+            if partition == p:
+                product_ids.append(product_id)
+        return product_ids
 
-    async def _subscribe_full_and_proxy(self, producer : aiokafka.AIOKafkaProducer, product_ids: List[str], partition : int):
-        async with websockets.connect(
-            self.feed_uri,
-            max_size = self.feed_max_size,
-            max_queue = self.max_queue,
-            compression = None) as ws:
-            await subscribe_full._subscribe_full(ws, product_ids)
-            await ws.recv() # skip subscribe response
-            await _proxy_to_kafka_print(ws, producer, self.topic, partition, self.max_batch_bytes, self.max_linger)
+    async def _subscribe_full_and_proxy(self, producer : aiokafka.AIOKafkaProducer, partition : int):
+        product_ids = self.products_for(partition)
+        # We'll match the websocket buffer size with the amount of bytes we can batch up so the producer/consumer are in sympathy
+        async with self.feed.connect(self.feed_max_memory) as connection:
+            await connection.subscribe_full(product_ids)
+            await _proxy_to_kafka_print(connection, producer, self.topic, partition, self.max_batch_memory, self.max_linger)
 
     async def run(self):
         async with aiokafka.AIOKafkaProducer(
             bootstrap_servers=self.bootstrap_servers,
             client_id=self.client_id,
-            key_serializer=key_serializer,
-            value_serializer=value_serializer,
-            max_batch_size=self.max_batch_bytes,
+            max_batch_size=self.max_batch_memory,
             compression_type=self.producer_compression_type) as producer:
             await asyncio.gather(
-                *[ self._subscribe_full_and_proxy(producer, product_ids, partition) for (partition, product_ids) in self.partition_dict.items() ]
+                *[ self._subscribe_full_and_proxy(producer, partition) for partition in self.partitions ]
             )
 
 @dataclass
@@ -82,27 +77,10 @@ class Metrics:
     offset : int
     ws_queue_count : int
 
-def key_serializer(key):
-    return None if not key else bytes(key, encoding='utf8')
-
-def value_serializer(value):
-    return bytes(value, encoding='utf8')
-
-async def _recv(ws):
-    next_msg = await ws.recv()
-    return next_msg, time.time()
-
-async def _recv_timeout(ws, timeout):
-    try:
-        next_msg = await asyncio.wait_for(ws.recv(), max(MIN_LINGER, timeout))
-    except asyncio.TimeoutError:
-        return None
-    return next_msg, time.time()
-
 def _append(batch, msg, time):
-    return batch.append(key=None, value=value_serializer(msg), timestamp=int(time * 1000))
+    return batch.append(key=None, value=bytes(msg, encoding='utf8'), timestamp=int(time * 1000))
 
-async def _proxy_to_kafka(ws, producer : aiokafka.AIOKafkaProducer, topic : str, partition : int, max_linger : float):
+async def _proxy_to_kafka(connection : coinbase_feed.Connection, producer : aiokafka.AIOKafkaProducer, topic : str, partition : int, max_linger : float):
     batches = 0
     records = 0
     bytes = 0
@@ -112,18 +90,22 @@ async def _proxy_to_kafka(ws, producer : aiokafka.AIOKafkaProducer, topic : str,
     while True:
         batch = producer.create_batch()
         # Encountering full queues is likely a sign of falling behind, or not having enough buffer space to handle bursts
-        ws_queue_count = ws_queue_count + len(ws.messages)
-        (msg, now) = leftover or await _recv(ws)
-        leftover = None
+        ws_queue_count = ws_queue_count + connection.queue_length()
+        if leftover:
+            (msg, now) = leftover
+            leftover = None
+        else:
+            msg = await connection.recv_raw()
+            now = time.time()
         if not _append(batch, msg, now):
             raise RuntimeError("can't even send one message")
         linger_time = now + max_linger
         linger_timeout = max_linger
         while True:
-            next = await _recv_timeout(ws, linger_timeout)
-            if not next:
+            msg = await connection.recv_raw_timeout(linger_timeout)
+            if not msg:
                 break
-            (msg, now) = next
+            now = time.time()
             if not _append(batch, msg, now):
                 leftover = (msg, now)
                 break
@@ -138,9 +120,9 @@ async def _proxy_to_kafka(ws, producer : aiokafka.AIOKafkaProducer, topic : str,
         batches = batches + 1
         yield Metrics(partition, batches, records, bytes, offset, ws_queue_count)
 
-async def _proxy_to_kafka_print(ws, producer : aiokafka.AIOKafkaProducer, topic : str, partition : int, max_batch_bytes : int, max_linger : float):
+async def _proxy_to_kafka_print(connection : coinbase_feed.Connection, producer : aiokafka.AIOKafkaProducer, topic : str, partition : int, max_batch_bytes : int, max_linger : float):
     last_metric = None
-    async for metric in _proxy_to_kafka(ws, producer, topic, partition, max_linger):
+    async for metric in _proxy_to_kafka(connection, producer, topic, partition, max_linger):
         if not last_metric or int(last_metric.bytes / max_batch_bytes) != int(metric.bytes / max_batch_bytes):
             print(metric)
         last_metric = metric
