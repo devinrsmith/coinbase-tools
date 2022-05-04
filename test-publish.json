@@ -4,13 +4,14 @@
     "topic": "io.deephaven.coinbase.FullOrderbook",
     "product_partitions": {
         "BTC-USD": 0,
-        "ETH-USD": 0,
-        "USDT-USD": 0,
-        "ADA-USD": 0,
+        "ETH-USD": 1,
+        "USDT-USD": 2,
+        "ADA-USD": 3,
         "DOGE-USD": 0,
-        "SHIB-USD": 0,
-        "SOL-USD": 0,
-        "EOS-USD": 0
+        "SHIB-USD": 1,
+        "SOL-USD": 2,
+        "EOS-USD": 3
     },
-    "max_linger": 1.0
+    "max_linger": 1.0,
+    "producer_compression_type": "gzip"
 }

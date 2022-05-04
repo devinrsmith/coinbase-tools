@@ -1,0 +1,10 @@
+{
+    "groups": [
+        {
+            "handle": "/tmp/test.csv",
+            "feed": {
+                "product_ids": [ "BTC-USD" ]
+            }
+        }
+    ]
+}
