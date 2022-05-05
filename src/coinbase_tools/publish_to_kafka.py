@@ -9,6 +9,7 @@ import time
 import argparse
 
 from aiokafka.helpers import create_ssl_context
+import websockets
 
 from . import feed as coinbase_feed
 
@@ -19,7 +20,7 @@ class Config:
 
     bootstrap_servers : List[str]
     topic: str
-    product_partitions : Dict[str, int]
+    partitions : Dict[int, List[str]]
 
     max_memory: int = 2 ** 25 # 32 MiB
     # max_batch_bytes: int = 2 ** 20 # 1 MiB
@@ -46,26 +47,33 @@ class Config:
     #     # * 2, to account for ws recv buffer and producer send buffer
     #     return len(self.partitions) * self.max_batch_bytes * 2
 
-    @property
-    def partitions(self) -> Set[int]:
-        return set(self.product_partitions.values())
+    # @property
+    # def partitions(self) -> Set[int]:
+    #     return set(self.product_partitions.values())
 
     # def partitions(self) -> Set[int]:
     #     return set(self.product_partitions.values())
 
-    def products_for(self, partition : int) -> List[str]:
-        product_ids = []
-        for (product_id, p) in self.product_partitions.items():
-            if partition == p:
-                product_ids.append(product_id)
-        return product_ids
+    # def products_for(self, partition : int) -> List[str]:
+    #     product_ids = []
+    #     for (product_id, p) in self.product_partitions.items():
+    #         if partition == p:
+    #             product_ids.append(product_id)
+    #     return product_ids
 
     async def _subscribe_full_and_proxy(self, producer : aiokafka.AIOKafkaProducer, partition : int):
-        product_ids = self.products_for(partition)
-        # We'll match the websocket buffer size with the amount of bytes we can batch up so the producer/consumer are in sympathy
-        async with self.feed.connect(self.feed_max_memory) as connection:
-            await connection.subscribe_full(product_ids)
-            await _proxy_to_kafka_print(connection, producer, self.topic, partition, self.max_batch_memory, self.max_linger)
+        product_ids = self.partitions[partition]
+        # todo: async for connection in self.feed.connect(self.feed_max_memory):
+        # todo: allow configuration
+        while True:
+            # We'll match the websocket buffer size with the amount of bytes we can batch up so the producer/consumer are in sympathy
+            async with self.feed.connect(self.feed_max_memory) as connection:
+                try:
+                    await connection.subscribe_full(product_ids)
+                    await _proxy_to_kafka_print(connection, producer, self.topic, partition, self.max_batch_memory, self.max_linger)
+                except websockets.ConnectionClosed as e:
+                    print('Reconnecting after err:', e)
+                    continue
 
     async def run(self):
         async with aiokafka.AIOKafkaProducer(
@@ -79,7 +87,7 @@ class Config:
             sasl_plain_username=self.sasl_plain_username,
             sasl_plain_password=self.sasl_plain_password) as producer:
             await asyncio.gather(
-                *[ self._subscribe_full_and_proxy(producer, partition) for partition in self.partitions ]
+                *[ self._subscribe_full_and_proxy(producer, partition) for partition in self.partitions.keys() ]
             )
 
 @dataclass
@@ -151,7 +159,7 @@ def parse_args(args) -> Config:
 
 def main(args=None):
     config = parse_args(args)
-    print(config)
+    print(config.to_json())
     asyncio.run(config.run())
 
 if __name__ == '__main__':
